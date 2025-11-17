@@ -21,9 +21,9 @@ SLEEP_BETWEEN_REQUESTS = 3  # secondi di pausa tra prodotti
 # ========================
 # CONFIGURAZIONE FTP (da ENV)
 # ========================
-FTP_HOST = os.getenv("FTP_HOST", "ftp.tuoserver.com")
-FTP_USER = os.getenv("FTP_USER", "username")
-FTP_PASS = os.getenv("FTP_PASS", "password")
+FTP_HOST = os.getenv("FTP_HOST", "it3.siteground.eu")
+FTP_USER = os.getenv("FTP_USER", "foto@citymoda.cloud")
+FTP_PASS = os.getenv("FTP_PASS", "!53v2cccH48!")
 
 FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "/input")
 FTP_CSV_FILENAME = os.getenv("FTP_CSV_FILENAME", "prodotti.csv")
