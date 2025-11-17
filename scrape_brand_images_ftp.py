@@ -3,6 +3,7 @@ import os
 import time
 from urllib.parse import urljoin, urlparse
 from ftplib import FTP
+from io import BytesIO
 
 import requests
 from bs4 import BeautifulSoup
@@ -10,13 +11,12 @@ from bs4 import BeautifulSoup
 # ========================
 # CONFIGURAZIONE GENERALE
 # ========================
-# Paths locali (sul server Render o dove lanci lo script)
-LOCAL_WORK_DIR = "/tmp"  # puoi cambiarlo se vuoi
+# Directory di lavoro locale solo per il CSV
+LOCAL_WORK_DIR = "/tmp"
 LOCAL_CSV_PATH = os.path.join(LOCAL_WORK_DIR, "prodotti.csv")
-LOCAL_IMG_DIR = os.path.join(LOCAL_WORK_DIR, "immagini_brand")
 
 REQUEST_TIMEOUT = 20
-SLEEP_BETWEEN_REQUESTS = 3
+SLEEP_BETWEEN_REQUESTS = 3  # secondi di pausa tra prodotti
 
 # ========================
 # CONFIGURAZIONE FTP (da ENV)
@@ -39,35 +39,89 @@ HEADERS = {
 
 # ===============================
 # MAPPATURA BRAND → DOMINIO UFFICIALE
-# (DA ESTENDERE/AGGIUSTARE)
+# (puoi estenderla / correggerla nel tempo)
 # ===============================
 BRAND_DOMAIN_MAP = {
+    "4GIVENESS": "www.4giveness.it",
     "ADIDAS": "www.adidas.it",
-    "TOMMY HILFIGER": "it.tommy.com",
-    "TOMMY JEANS": "it.tommy.com",
-    "GUESS": "www.guess.eu",
-    "GUESS JEANS": "www.guess.eu",
-    "GUESS by MARCIANO": "www.guess.eu",
-    "VANS": "www.vans.com",
-    "THE NORTH FACE": "www.thenorthface.it",
+    "AERONAUTICA MILITARE": "www.aeronauticamilitareofficialstore.it",
+    "ANIYE BY": "www.aniyeby.com",
+    "ARMANI EXCHANGE": "www.armaniexchange.com",
+    "BIRKENSTOCK": "www.birkenstock.com",
+    "BLAUER": "www.blauerusa.com",
+    "BLUNDSTONE": "www.blundstone.it",
+    "BOSS": "www.hugoboss.com",
     "CALVIN KLEIN": "www.calvinklein.it",
     "CALVIN KLEIN JEANS": "www.calvinklein.it",
-    "LIU JO": "www.liujo.com",
-    "NAPAPIJRI": "www.napapijri.com",
-    "RALPH LAUREN": "www.ralphlauren.it",
+    "CALVIN KLEIN MENSWEAR": "www.calvinklein.it",
+    "COLORS OF CALIFORNIA": "www.colorsofcalifornia.it",
+    "COMPANIA FANTASTICA": "www.companiafantastica.com",
+    "CRIME LONDON": "www.crimelondon.com",
+    "CROCS": "www.crocs.eu",
+    "CULT": "www.cultofficial.com",
+    "DESIGUAL": "www.desigual.com",
+    "DICKIES": "www.dickieslife.com",
+    "DIESEL KID": "it.diesel.com",
+    "DISCLAIMER": None,  # TODO: aggiorna con dominio ufficiale
+    "DSQUARED": "www.dsquared2.com",
+    "EA7": "www.armani.com",  # linea EA7 su Armani
+    "FRACOMINA": "www.fracomina.it",
+    "FRANCESCO MILANO": "www.francescomilano.com",
+    "G-STAR": "www.g-star.com",
     "GEOX": "www.geox.com",
+    "GOLD&GOLD": "www.goldandgold.it",
+    "GUESS": "www.guess.eu",
+    "GUESS by MARCIANO": "www.guess.eu",
+    "GUESS JEANS": "www.guess.eu",
+    "HARMONT & BLAINE": "www.harmontblaine.com",
+    "HAVAIANAS": "www.havaianas-store.com",
+    "HAVEONE": "www.haveone.it",
+    "HEY DUDE": "eu.heydude.com",
+    "HUGO MEN": "www.hugoboss.com",
+    "ICON": None,  # troppo generico, da gestire a parte
+    "IMPERIAL": "www.imperialfashion.com",
+    "KOCCA": "www.kocca.it",
+    "LACOSTE": "www.lacoste.com",
+    "LEVI'S": "www.levi.com",
+    "LIU JO": "www.liujo.com",
+    "LOVE MOSCHINO": "www.moschino.com",
+    "MANILA GRACE": "www.manilagrace.com",
+    "MARC ELLIS": "www.marc-ellis.com",
+    "MARKUP": "www.markupfashion.com",
+    "MAYORAL": "www.mayoral.com",
+    "MOLLY BRACKEN": "www.mollybracken.com",
+    "NAPAPIJRI": "www.napapijri.com",
     "NEW BALANCE": "www.newbalance.it",
-    "TIMBERLAND": "www.timberland.it",
-    "SKECHERS": "www.skechers.it",
+    "PEPE JEANS": "www.pepejeans.com",
     "PEUTEREY": "www.peuterey.com",
+    "RALPH LAUREN": "www.ralphlauren.it",
+    "REFRESH": "www.refreshshoes.com",
+    "RICHMOND": "www.johnrichmond.com",
+    "RINASCIMENTO": "www.rinascimento.com",
+    "SKECHERS": "www.skechers.it",
+    "SPRAY GROUND": "www.sprayground.com",
+    "SQUAD": None,  # TODO
+    "SUN 68": "www.sun68.com",
+    "SUNDEK": "www.sundek.com",
+    "SUNS": "www.sunsboards.com",
+    "SUPERCULTURE": None,  # TODO
+    "THE FARM by GOORIN BROS.": "www.goorin.com",
+    "THE NORTH FACE": "www.thenorthface.it",
+    "TIMBERLAND": "www.timberland.it",
+    "TOMMY HILFIGER": "it.tommy.com",
+    "TOMMY JEANS": "it.tommy.com",
+    "TRUSSARDI JEANS": "www.trussardi.com",
+    "VALENTINO": "www.valentino.com",
+    "VANS": "www.vans.com",
     "VICOLO": "www.vicolofashion.com",
-    # ... aggiungi tutti gli altri brand che ti servono ...
+    "V°73": "www.v73.it",
+    "YES ZEE": "www.yeszee.com",
 }
-
 
 # ========================
 # UTILITY DI BASE
 # ========================
+
 def ensure_dir(path: str):
     if not os.path.exists(path):
         os.makedirs(path)
@@ -81,6 +135,7 @@ def brand_to_folder(brand: str) -> str:
         .replace("&", "e")
         .replace("°", "")
         .replace(".", "")
+        .replace("'", "")
     )
     return slug
 
@@ -143,41 +198,42 @@ def ftp_ensure_dir(path: str):
         except Exception:
             ftp.mkd(p)
             ftp.cwd(p)
-    # torna alla dir iniziale
     ftp.cwd(original_cwd)
 
 
-def ftp_upload_image(local_path: str, remote_dir: str, filename: str):
+def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
     ftp = get_ftp()
-    # assicurati che la directory esista
     ftp_ensure_dir(remote_dir)
-    # vai nella directory destinazione
     ftp.cwd(remote_dir)
-    print(f"   ⬆ Carico su FTP: {remote_dir}/{filename}")
-    with open(local_path, "rb") as f:
-        ftp.storbinary(f"STOR {filename}", f)
+
+    print(f"   ⬆ Upload diretto FTP: {remote_dir}/{filename}")
+    bio = BytesIO(binary_content)
+    ftp.storbinary(f"STOR {filename}", bio)
+    bio.close()
 
 
 # ========================
 # LOGICA SCRAPING BRAND
 # ========================
+
 def build_search_url(brand: str, sku: str) -> str | None:
     domain = BRAND_DOMAIN_MAP.get(brand.upper())
     if not domain:
         return None
-    # pattern generico
+    # Pattern generico. Se per qualche brand non funziona,
+    # puoi personalizzare qui dentro con un if brand == "...":
     return f"https://{domain}/search?q={sku}"
 
 
 def pick_first_product_link_from_search(html: str, base_url: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
 
-    # 1) link con <img> (tipico prodotto)
+    # 1) Link con <img> (tipico risultato prodotto in griglia)
     for a in soup.find_all("a", href=True):
         if a.find("img"):
             return urljoin(base_url, a["href"])
 
-    # 2) fallback su link con pattern "product"
+    # 2) Fallback: link con path che assomiglia a una pagina prodotto
     for a in soup.find_all("a", href=True):
         href = a["href"]
         full = urljoin(base_url, href)
@@ -196,7 +252,7 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
     if og and og.get("content"):
         return urljoin(page_url, og["content"].strip())
 
-    # 2) JSON-LD con image
+    # 2) JSON-LD con campo image
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             import json
@@ -210,7 +266,7 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
         except Exception:
             pass
 
-    # 3) fallback prima immagine grande
+    # 3) Fallback: immagine "più grande" per area (width * height)
     best = None
     best_area = 0
     for img in soup.find_all("img"):
@@ -218,6 +274,7 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
         if not src:
             continue
 
+        # Se è srcset, prendi il primo URL
         if "," in src:
             src = src.split(",")[0].split(" ")[0]
 
@@ -247,24 +304,9 @@ def download_and_upload_image(img_url: str, sku: str, brand: str):
     filename = f"{sku}{ext}"
 
     brand_folder = brand_to_folder(brand)
-
-    # Percorso locale
-    local_brand_dir = os.path.join(LOCAL_IMG_DIR, brand_folder)
-    ensure_dir(local_brand_dir)
-    local_path = os.path.join(local_brand_dir, filename)
-
-    # Salva in locale
-    try:
-        with open(local_path, "wb") as f:
-            f.write(resp.content)
-        print(f"   ✅ Salvata localmente come {local_path}")
-    except Exception as e:
-        print(f"   ✖ Errore nel salvataggio locale {filename}: {e}")
-        return
-
-    # Percorso remoto FTP
     remote_dir = os.path.join(FTP_IMG_BASE_DIR, brand_folder).replace("\\", "/")
-    ftp_upload_image(local_path, remote_dir, filename)
+
+    ftp_upload_image_stream(resp.content, remote_dir, filename)
 
 
 def process_product(sku: str, brand: str):
@@ -302,12 +344,11 @@ def process_product(sku: str, brand: str):
 
 def main():
     ensure_dir(LOCAL_WORK_DIR)
-    ensure_dir(LOCAL_IMG_DIR)
 
-    # 1) scarica il CSV da FTP
+    # 1) Scarica il CSV da FTP
     ftp_download_csv(LOCAL_CSV_PATH)
 
-    # 2) leggi il CSV locale
+    # 2) Leggi il CSV locale (solo per i dati, non per le immagini)
     with open(LOCAL_CSV_PATH, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -319,7 +360,7 @@ def main():
             process_product(sku, brand)
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-    # chiudi connessione FTP
+    # Chiudi connessione FTP
     global _ftp
     if _ftp is not None:
         _ftp.quit()
