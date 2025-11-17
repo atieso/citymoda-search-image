@@ -25,9 +25,9 @@ FTP_HOST = os.getenv("FTP_HOST", "it3.siteground.eu")
 FTP_USER = os.getenv("FTP_USER", "foto@citymoda.cloud")
 FTP_PASS = os.getenv("FTP_PASS", "!53v2cccH48!")
 
-FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "/input")
+FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "citymoda.cloud/public_html/input")
 FTP_CSV_FILENAME = os.getenv("FTP_CSV_FILENAME", "prodotti.csv")
-FTP_IMG_BASE_DIR = os.getenv("FTP_IMG_BASE_DIR", "/images")
+FTP_IMG_BASE_DIR = os.getenv("FTP_IMG_BASE_DIR", "citymoda.cloud/public_html/images")
 
 HEADERS = {
     "User-Agent": (
