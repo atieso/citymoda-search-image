@@ -86,7 +86,7 @@ BRAND_DOMAIN_MAP = {
     "LIU JO": "www.liujo.com",
     "LOVE MOSCHINO": "www.moschino.com",
     "MANILA GRACE": "www.manilagrace.com",
-    "MARC ELLIS": "www.marc-ellis.com",
+    "MARC ELLIS": "www.marcellis.com",
     "MARKUP": "www.markupfashion.com",
     "MAYORAL": "www.mayoral.com",
     "MOLLY BRACKEN": "www.mollybracken.com",
