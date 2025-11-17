@@ -164,38 +164,54 @@ def get_file_extension_from_url(url: str) -> str:
 # FUNZIONI FTP
 # ========================
 _ftp = None
+ROOT_DIR = None  # terrà la root FTP appena ci connettiamo
 
 
 def get_ftp() -> FTP:
-    global _ftp
+    global _ftp, ROOT_DIR
     if _ftp is None:
         print(f"[*] Connessione FTP a {FTP_HOST}...")
         _ftp = FTP(FTP_HOST)
         _ftp.login(FTP_USER, FTP_PASS)
-        print("[*] Connesso a FTP.")
+        ROOT_DIR = _ftp.pwd()  # memorizziamo la root FTP
+        print("[*] Connesso a FTP. ROOT_DIR:", ROOT_DIR)
     return _ftp
+
 
 
 def ftp_download_csv(local_path: str):
     ftp = get_ftp()
-    ftp.cwd(FTP_CSV_DIR)
+
+    # vai sempre alla root
+    ftp.cwd(ROOT_DIR)
+
+    # poi entra nella cartella del CSV
+    csv_dir = FTP_CSV_DIR.lstrip("/")  # niente slash iniziale
+    if csv_dir:
+        ftp.cwd(csv_dir)
+
     print(f"[*] Scarico CSV da FTP: {FTP_CSV_DIR}/{FTP_CSV_FILENAME} → {local_path}")
     with open(local_path, "wb") as f:
-        ftp.retrbinary(f"RETR {FTP_CSV_FILENAME}", f.write)
+        ftp.retrbinary(f"RETR " + FTP_CSV_FILENAME, f.write)
     print("[*] CSV scaricato.")
+
+    # torna alla root
+    ftp.cwd(ROOT_DIR)
+
 
 
 def ftp_ensure_dir(path: str):
     """
     Crea ricorsivamente la directory su FTP se non esiste.
-    Usa sempre path RELATIVO (senza / iniziale) e
-    NON lascia l'FTP "incastrato" in quella directory.
+    Parte SEMPRE dalla ROOT_DIR, così non annidiamo mai /input/... all'infinito.
     """
     ftp = get_ftp()
-    original_cwd = ftp.pwd()
 
     # normalizza: niente slash iniziale
     rel_path = path.lstrip("/")
+
+    # parti SEMPRE dalla root FTP
+    ftp.cwd(ROOT_DIR)
 
     parts = [p for p in rel_path.split("/") if p]
     for p in parts:
@@ -204,33 +220,22 @@ def ftp_ensure_dir(path: str):
         except Exception:
             ftp.mkd(p)
             ftp.cwd(p)
+    # alla fine restiamo nella dir di destinazione
 
-    # torna alla dir iniziale dopo aver creato la struttura
-    ftp.cwd(original_cwd)
 
 
 def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
-    """
-    Upload diretto: non facciamo cwd finale, ma usiamo STOR con il path completo.
-    In questo modo evitiamo annidamenti progressivi.
-    """
     ftp = get_ftp()
 
-    # normalizza base dir
-    rel_dir = remote_dir.lstrip("/")
-    ftp_ensure_dir(rel_dir)
+    # crea (se serve) ed entra nella directory di destinazione,
+    # partendo dalla ROOT_DIR
+    ftp_ensure_dir(remote_dir)
 
-    # path completo del file rispetto alla root FTP
-    if rel_dir:
-        remote_path = f"{rel_dir.rstrip('/')}/{filename}"
-    else:
-        remote_path = filename
-
-    print(f"   ⬆ Upload diretto FTP: {remote_path}")
-
+    print(f"   ⬆ Upload diretto FTP in dir '{remote_dir}': {filename}")
     bio = BytesIO(binary_content)
-    ftp.storbinary(f"STOR {remote_path}", bio)
+    ftp.storbinary(f"STOR {filename}", bio)
     bio.close()
+
 
 
 
@@ -329,6 +334,7 @@ def download_and_upload_image(img_url: str, sku: str, brand: str):
     remote_dir = os.path.join(FTP_IMG_BASE_DIR, brand_folder).replace("\\", "/")
 
     ftp_upload_image_stream(resp.content, remote_dir, filename)
+
 
 
 def process_product(sku: str, brand: str):
