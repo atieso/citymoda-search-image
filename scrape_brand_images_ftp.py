@@ -188,28 +188,44 @@ def ftp_download_csv(local_path: str):
 def ftp_ensure_dir(path: str):
     """
     Crea ricorsivamente la directory su FTP se non esiste.
+    Usa sempre path RELATIVO (senza / iniziale).
     """
     ftp = get_ftp()
     original_cwd = ftp.pwd()
-    parts = [p for p in path.split("/") if p]
+
+    # normalizza: niente slash iniziale
+    rel_path = path.lstrip("/")
+
+    parts = [p for p in rel_path.split("/") if p]
     for p in parts:
         try:
             ftp.cwd(p)
         except Exception:
             ftp.mkd(p)
             ftp.cwd(p)
+
+    # torna alla dir iniziale
     ftp.cwd(original_cwd)
+
 
 
 def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
     ftp = get_ftp()
-    ftp_ensure_dir(remote_dir)
-    ftp.cwd(remote_dir)
 
-    print(f"   ⬆ Upload diretto FTP: {remote_dir}/{filename}")
+    # normalizza il path: niente slash iniziale
+    rel_dir = remote_dir.lstrip("/")
+
+    # crea le cartelle se non esistono
+    ftp_ensure_dir(rel_dir)
+
+    # entra nella dir relativa
+    ftp.cwd(rel_dir)
+
+    print(f"   ⬆ Upload diretto FTP: {rel_dir}/{filename}")
     bio = BytesIO(binary_content)
     ftp.storbinary(f"STOR {filename}", bio)
     bio.close()
+
 
 
 # ========================
