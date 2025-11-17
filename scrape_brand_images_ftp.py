@@ -188,7 +188,8 @@ def ftp_download_csv(local_path: str):
 def ftp_ensure_dir(path: str):
     """
     Crea ricorsivamente la directory su FTP se non esiste.
-    Usa sempre path RELATIVO (senza / iniziale).
+    Usa sempre path RELATIVO (senza / iniziale) e
+    NON lascia l'FTP "incastrato" in quella directory.
     """
     ftp = get_ftp()
     original_cwd = ftp.pwd()
@@ -204,26 +205,31 @@ def ftp_ensure_dir(path: str):
             ftp.mkd(p)
             ftp.cwd(p)
 
-    # torna alla dir iniziale
+    # torna alla dir iniziale dopo aver creato la struttura
     ftp.cwd(original_cwd)
 
 
-
 def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
+    """
+    Upload diretto: non facciamo cwd finale, ma usiamo STOR con il path completo.
+    In questo modo evitiamo annidamenti progressivi.
+    """
     ftp = get_ftp()
 
-    # normalizza il path: niente slash iniziale
+    # normalizza base dir
     rel_dir = remote_dir.lstrip("/")
-
-    # crea le cartelle se non esistono
     ftp_ensure_dir(rel_dir)
 
-    # entra nella dir relativa
-    ftp.cwd(rel_dir)
+    # path completo del file rispetto alla root FTP
+    if rel_dir:
+        remote_path = f"{rel_dir.rstrip('/')}/{filename}"
+    else:
+        remote_path = filename
 
-    print(f"   ⬆ Upload diretto FTP: {rel_dir}/{filename}")
+    print(f"   ⬆ Upload diretto FTP: {remote_path}")
+
     bio = BytesIO(binary_content)
-    ftp.storbinary(f"STOR {filename}", bio)
+    ftp.storbinary(f"STOR {remote_path}", bio)
     bio.close()
 
 
