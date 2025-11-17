@@ -1,0 +1,56 @@
+services:
+  - type: worker
+    name: citymoda-image-scraper
+    region: frankfurt
+    plan: starter
+    env: python
+    rootDir: .
+    
+    buildCommand: |
+      pip install -r requirements.txt
+
+    startCommand: |
+      python scrape_brand_images_ftp.py
+
+    envVars:
+      - key: FTP_HOST
+        value: ftp.tuoserver.com
+      - key: FTP_USER
+        value: username
+      - key: FTP_PASS
+        value: password
+      - key: FTP_CSV_DIR
+        value: /input
+      - key: FTP_CSV_FILENAME
+        value: prodotti.csv
+      - key: FTP_IMG_BASE_DIR
+        value: /images
+
+jobs:
+  - name: citymoda-image-scraper-cron
+    type: cron
+    schedule: "0 3 * * *"   # ogni giorno alle 03:00
+    region: frankfurt
+    plan: starter
+    env: python
+    rootDir: .
+
+    buildCommand: |
+      pip install -r requirements.txt
+
+    startCommand: |
+      python scrape_brand_images_ftp.py
+
+    envVars:
+      - key: FTP_HOST
+        value: ftp.tuoserver.com
+      - key: FTP_USER
+        value: username
+      - key: FTP_PASS
+        value: password
+      - key: FTP_CSV_DIR
+        value: /input
+      - key: FTP_CSV_FILENAME
+        value: prodotti.csv
+      - key: FTP_IMG_BASE_DIR
+        value: /images
