@@ -5,6 +5,9 @@ from urllib.parse import urljoin, urlparse
 from ftplib import FTP
 from io import BytesIO
 
+import re
+from urllib.parse import quote_plus
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -80,13 +83,13 @@ BRAND_DOMAIN_MAP = {
     "HUGO MEN": "www.hugoboss.com",
     "ICON": None,  # troppo generico, da gestire a parte
     "IMPERIAL": "www.imperialfashion.com",
-    "KOCCA": "www.kocca.it",
+    "KOCCA": "kocca.it",
     "LACOSTE": "www.lacoste.com",
     "LEVI'S": "www.levi.com",
     "LIU JO": "www.liujo.com",
     "LOVE MOSCHINO": "www.moschino.com",
     "MANILA GRACE": "www.manilagrace.com",
-    "MARC ELLIS": "www.marcellis.com",
+    "MARC ELLIS": "marcellis.com",
     "MARKUP": "www.markupfashion.com",
     "MAYORAL": "www.mayoral.com",
     "MOLLY BRACKEN": "www.mollybracken.com",
@@ -243,13 +246,69 @@ def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: st
 # LOGICA SCRAPING BRAND
 # ========================
 
+def build_kocca_query_from_sku(sku: str) -> str:
+    """
+    Per KOCCA: CLEMENTINAM9001 → 'clementina'
+    Prendiamo la parte iniziale fino al primo numero.
+    """
+    s = sku.strip()
+    # tronca alla prima cifra
+    base = re.split(r"\d", s, 1)[0]
+    return base.lower()
+
+
+def build_marc_ellis_query_from_sku(sku: str) -> str:
+    """
+    Per MARC ELLIS: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'
+    Rende lo SKU più 'parlato' per la search Shopify.
+    """
+    s = sku.strip().lower()
+
+    # separa lettere/numeri con spazio (around m26 → around m 26)
+    s = re.sub(r"([a-z])(\d)", r"\1 \2", s)
+    s = re.sub(r"(\d)([a-z])", r"\1 \2", s)
+
+    # rimpiazza underscore con spazio (se mai ce ne fossero)
+    s = s.replace("_", " ")
+
+    # opzionale: un minimo di "pulizia" sui colori composti, ma spesso
+    # già così Shopify trova il prodotto
+    return s
+
 def build_search_url(brand: str, sku: str) -> str | None:
+    """
+    Costruisce l'URL di ricerca a seconda del brand.
+    Per alcuni brand (KOCCA, MARC ELLIS) usiamo una logica ad hoc.
+    Per gli altri usiamo /search?q=SKU sul dominio ufficiale.
+    """
+    b = (brand or "").strip().lower()
+
+    # KOCCA → cerca per nome modello (CLEMENTINA, ELISEWIN, ecc.)
+    if b == "kocca":
+        query = build_kocca_query_from_sku(sku)
+        q = quote_plus(query)
+        return f"https://kocca.it/search?q={q}"
+
+    # MARC ELLIS → dominio + search corretta + query "umana"
+    if b == "marc ellis":
+        query = build_marc_ellis_query_from_sku(sku)
+        q = quote_plus(query)
+        # URL che mi hai indicato:
+        # https://marcellis.com/search?options%5Bprefix%5D=last&q=
+        return (
+            "https://marcellis.com/search"
+            "?options%5Bprefix%5D=last"
+            f"&q={q}"
+        )
+
+    # altri brand → fallback generico /search?q=<SKU> sul dominio mappato
     domain = BRAND_DOMAIN_MAP.get(brand.upper())
     if not domain:
         return None
-    # Pattern generico. Se per qualche brand non funziona,
-    # puoi personalizzare qui dentro con un if brand == "...":
-    return f"https://{domain}/search?q={sku}"
+
+    q = quote_plus(sku.strip())
+    return f"https://{domain}/search?q={q}"
+
 
 
 def pick_first_product_link_from_search(html: str, base_url: str) -> str | None:
