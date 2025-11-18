@@ -253,7 +253,7 @@ def build_kocca_query_from_sku(sku: str) -> str:
     Prende la parte prima della prima cifra.
     """
     s = sku.strip()
-    base = re.split(r"\d", s, 1)[0]
+    base = re.split(r"\d", s, maxsplit=1)[0]
     return base.lower()
 
 
