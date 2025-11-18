@@ -452,7 +452,7 @@ def extract_all_images_from_product_page(html, page_url):
     - og:image
     - JSON-LD con lista di immagini
     - <img> dentro sezioni prodotto (heuristica)
-    Ritorna una lista di URL unici in ordine di priorità.
+    Esclude SVG.
     """
     soup = BeautifulSoup(html, "html.parser")
     urls = []
@@ -461,6 +461,10 @@ def extract_all_images_from_product_page(html, page_url):
         if not u:
             return
         full = urljoin(page_url, u)
+        # ❌ escludi SVG
+        lower = full.lower()
+        if lower.endswith(".svg") or ".svg" in lower:
+            return
         if full not in urls:
             urls.append(full)
 
@@ -512,6 +516,10 @@ def extract_all_images_from_product_page(html, page_url):
 
         full = urljoin(page_url, src)
 
+        lower = full.lower()
+        if lower.endswith(".svg") or ".svg" in lower:
+            continue
+
         try:
             w = int(img.get("width") or 0)
             h = int(img.get("height") or 0)
@@ -540,6 +548,7 @@ def download_and_upload_images(img_urls, sku, brand):
     Scarica e carica su FTP tutte le immagini nella lista.
     La prima immagine mantiene il nome SKU.ext,
     le successive diventano SKU_2.ext, SKU_3.ext, ecc.
+    Esclude SVG prima del download.
     """
     if not img_urls:
         print("   ✖ Nessuna immagine da scaricare.")
@@ -549,12 +558,23 @@ def download_and_upload_images(img_urls, sku, brand):
     remote_dir = os.path.join(FTP_IMG_BASE_DIR, brand_folder).replace("\\", "/")
 
     for idx, img_url in enumerate(img_urls, start=1):
+        lower = img_url.lower()
+        if lower.endswith(".svg") or ".svg" in lower:
+            print("   ⚠️ Ignorata immagine SVG:", img_url)
+            continue
+
         print(f"   ⬇ Download immagine #{idx}: {img_url}")
         resp = http_get(img_url)
         if not resp:
             continue
 
         ext = get_file_extension_from_url(img_url)
+
+        # sicurezza: se per caso l'estensione è .svg, salta
+        if ext.lower() == ".svg":
+            print("   ⚠️ Ignorata immagine SVG (da estensione):", img_url)
+            continue
+
         if idx == 1:
             filename = f"{sku}{ext}"
         else:
@@ -613,7 +633,7 @@ def process_product(sku, brand):
         print("   ✖ Nessuna immagine trovata nella pagina prodotto.")
         return
 
-    print(f"   ✅ Trovate {len(img_urls)} immagini prodotto.")
+    print(f"   ✅ Trovate {len(img_urls)} immagini prodotto (SVG escluse).")
     download_and_upload_images(img_urls, sku, brand)
 
 
