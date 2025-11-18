@@ -1,12 +1,11 @@
 import csv
 import os
 import time
-from urllib.parse import urljoin, urlparse
-from ftplib import FTP
-from io import BytesIO
-
 import re
-from urllib.parse import quote_plus
+import json
+from io import BytesIO
+from urllib.parse import urljoin, urlparse, quote_plus
+from ftplib import FTP
 
 import requests
 from bs4 import BeautifulSoup
@@ -14,7 +13,6 @@ from bs4 import BeautifulSoup
 # ========================
 # CONFIGURAZIONE GENERALE
 # ========================
-# Directory di lavoro locale solo per il CSV
 LOCAL_WORK_DIR = "/tmp"
 LOCAL_CSV_PATH = os.path.join(LOCAL_WORK_DIR, "prodotti.csv")
 
@@ -24,10 +22,14 @@ SLEEP_BETWEEN_REQUESTS = 3  # secondi di pausa tra prodotti
 # ========================
 # CONFIGURAZIONE FTP (da ENV)
 # ========================
-FTP_HOST = os.getenv("FTP_HOST", "it3.siteground.eu")
-FTP_USER = os.getenv("FTP_USER", "foto@citymoda.cloud")
-FTP_PASS = os.getenv("FTP_PASS", "!53v2cccH48!")
+FTP_HOST = os.getenv("FTP_HOST", "ftp.tuoserver.com")
+FTP_USER = os.getenv("FTP_USER", "username")
+FTP_PASS = os.getenv("FTP_PASS", "password")
 
+# ATTENZIONE: percorsi RELATIVI alla root FTP del tuo utente
+# Per il tuo caso attuale:
+# FTP_CSV_DIR      = "citymoda.cloud/public_html/input"
+# FTP_IMG_BASE_DIR = "citymoda.cloud/public_html/images"
 FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "citymoda.cloud/public_html/input")
 FTP_CSV_FILENAME = os.getenv("FTP_CSV_FILENAME", "prodotti.csv")
 FTP_IMG_BASE_DIR = os.getenv("FTP_IMG_BASE_DIR", "citymoda.cloud/public_html/images")
@@ -41,8 +43,7 @@ HEADERS = {
 }
 
 # ===============================
-# MAPPATURA BRAND → DOMINIO UFFICIALE
-# (puoi estenderla / correggerla nel tempo)
+# MAPPATURA BRAND → DOMINIO UFFICIALE (fallback HTML)
 # ===============================
 BRAND_DOMAIN_MAP = {
     "4GIVENESS": "www.4giveness.it",
@@ -65,9 +66,9 @@ BRAND_DOMAIN_MAP = {
     "DESIGUAL": "www.desigual.com",
     "DICKIES": "www.dickieslife.com",
     "DIESEL KID": "it.diesel.com",
-    "DISCLAIMER": None,  # TODO: aggiorna con dominio ufficiale
+    "DISCLAIMER": None,
     "DSQUARED": "www.dsquared2.com",
-    "EA7": "www.armani.com",  # linea EA7 su Armani
+    "EA7": "www.armani.com",
     "FRACOMINA": "www.fracomina.it",
     "FRANCESCO MILANO": "www.francescomilano.com",
     "G-STAR": "www.g-star.com",
@@ -81,7 +82,7 @@ BRAND_DOMAIN_MAP = {
     "HAVEONE": "www.haveone.it",
     "HEY DUDE": "eu.heydude.com",
     "HUGO MEN": "www.hugoboss.com",
-    "ICON": None,  # troppo generico, da gestire a parte
+    "ICON": None,
     "IMPERIAL": "www.imperialfashion.com",
     "KOCCA": "kocca.it",
     "LACOSTE": "www.lacoste.com",
@@ -103,11 +104,11 @@ BRAND_DOMAIN_MAP = {
     "RINASCIMENTO": "www.rinascimento.com",
     "SKECHERS": "www.skechers.it",
     "SPRAY GROUND": "www.sprayground.com",
-    "SQUAD": None,  # TODO
+    "SQUAD": None,
     "SUN 68": "www.sun68.com",
     "SUNDEK": "www.sundek.com",
     "SUNS": "www.sunsboards.com",
-    "SUPERCULTURE": None,  # TODO
+    "SUPERCULTURE": None,
     "THE FARM by GOORIN BROS.": "www.goorin.com",
     "THE NORTH FACE": "www.thenorthface.it",
     "TIMBERLAND": "www.timberland.it",
@@ -122,6 +123,13 @@ BRAND_DOMAIN_MAP = {
 }
 
 # ========================
+# VARIABILI FTP GLOBALI
+# ========================
+_ftp = None
+ROOT_DIR = None  # root FTP dell'utente dopo il login
+
+
+# ========================
 # UTILITY DI BASE
 # ========================
 
@@ -131,7 +139,7 @@ def ensure_dir(path: str):
 
 
 def brand_to_folder(brand: str) -> str:
-    slug = (
+    return (
         brand.strip()
         .lower()
         .replace(" ", "_")
@@ -140,7 +148,6 @@ def brand_to_folder(brand: str) -> str:
         .replace(".", "")
         .replace("'", "")
     )
-    return slug
 
 
 def http_get(url: str) -> requests.Response | None:
@@ -164,11 +171,8 @@ def get_file_extension_from_url(url: str) -> str:
 
 
 # ========================
-# FUNZIONI FTP
+# FTP
 # ========================
-_ftp = None
-ROOT_DIR = None  # terrà la root FTP appena ci connettiamo
-
 
 def get_ftp() -> FTP:
     global _ftp, ROOT_DIR
@@ -176,10 +180,9 @@ def get_ftp() -> FTP:
         print(f"[*] Connessione FTP a {FTP_HOST}...")
         _ftp = FTP(FTP_HOST)
         _ftp.login(FTP_USER, FTP_PASS)
-        ROOT_DIR = _ftp.pwd()  # memorizziamo la root FTP
+        ROOT_DIR = _ftp.pwd()
         print("[*] Connesso a FTP. ROOT_DIR:", ROOT_DIR)
     return _ftp
-
 
 
 def ftp_download_csv(local_path: str):
@@ -188,19 +191,18 @@ def ftp_download_csv(local_path: str):
     # vai sempre alla root
     ftp.cwd(ROOT_DIR)
 
-    # poi entra nella cartella del CSV
-    csv_dir = FTP_CSV_DIR.lstrip("/")  # niente slash iniziale
+    # entra nella cartella del CSV
+    csv_dir = FTP_CSV_DIR.lstrip("/")
     if csv_dir:
         ftp.cwd(csv_dir)
 
     print(f"[*] Scarico CSV da FTP: {FTP_CSV_DIR}/{FTP_CSV_FILENAME} → {local_path}")
     with open(local_path, "wb") as f:
-        ftp.retrbinary(f"RETR " + FTP_CSV_FILENAME, f.write)
+        ftp.retrbinary("RETR " + FTP_CSV_FILENAME, f.write)
     print("[*] CSV scaricato.")
 
     # torna alla root
     ftp.cwd(ROOT_DIR)
-
 
 
 def ftp_ensure_dir(path: str):
@@ -226,83 +228,168 @@ def ftp_ensure_dir(path: str):
     # alla fine restiamo nella dir di destinazione
 
 
-
 def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
+    """
+    Upload diretto: crea la dir partendo dalla ROOT_DIR, ci entra
+    e fa STOR filename (senza path assoluti).
+    """
     ftp = get_ftp()
 
-    # crea (se serve) ed entra nella directory di destinazione,
-    # partendo dalla ROOT_DIR
     ftp_ensure_dir(remote_dir)
 
     print(f"   ⬆ Upload diretto FTP in dir '{remote_dir}': {filename}")
     bio = BytesIO(binary_content)
-    ftp.storbinary(f"STOR {filename}", bio)
+    ftp.storbinary("STOR " + filename, bio)
     bio.close()
 
 
-
-
 # ========================
-# LOGICA SCRAPING BRAND
+# LOGICA DI RICERCA (KOCCA / MARC ELLIS / GENERICA)
 # ========================
 
 def build_kocca_query_from_sku(sku: str) -> str:
     """
-    Per KOCCA: CLEMENTINAM9001 → 'clementina'
-    Prendiamo la parte iniziale fino al primo numero.
+    KOCCA: CLEMENTINAM9001 → 'clementina'
+    Prende la parte prima della prima cifra.
     """
     s = sku.strip()
-    # tronca alla prima cifra
     base = re.split(r"\d", s, 1)[0]
     return base.lower()
 
 
 def build_marc_ellis_query_from_sku(sku: str) -> str:
     """
-    Per MARC ELLIS: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'
-    Rende lo SKU più 'parlato' per la search Shopify.
+    MARC ELLIS: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'
+    Rende lo SKU più "umano" per la search Shopify.
     """
     s = sku.strip().lower()
-
-    # separa lettere/numeri con spazio (around m26 → around m 26)
     s = re.sub(r"([a-z])(\d)", r"\1 \2", s)
     s = re.sub(r"(\d)([a-z])", r"\1 \2", s)
-
-    # rimpiazza underscore con spazio (se mai ce ne fossero)
     s = s.replace("_", " ")
-
-    # opzionale: un minimo di "pulizia" sui colori composti, ma spesso
-    # già così Shopify trova il prodotto
     return s
+
+
+def find_kocca_product_url(sku: str) -> str | None:
+    """
+    Trova l'URL prodotto KOCCA usando l'endpoint di search JSON.
+    Esempio: CLEMENTINAM9001 → query 'clementina'.
+    """
+    query = build_kocca_query_from_sku(sku)  # es. 'clementina'
+    q = quote_plus(query)
+
+    suggest_url = (
+        "https://kocca.it/search/suggest.json"
+        f"?q={q}&resources[type]=product&resources[limit]=10"
+    )
+    print(f"   🔍 (KOCCA JSON) {suggest_url}")
+    resp = http_get(suggest_url)
+    if not resp:
+        return None
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        print("   ✖ Errore parsing JSON Kocca:", e)
+        return None
+
+    resources = data.get("resources") or {}
+    results = resources.get("results") or {}
+    products = results.get("products") or []
+
+    if not products:
+        print("   ✖ Nessun prodotto KOCCA da suggest.json")
+        return None
+
+    query_l = query.lower()
+    best = None
+    best_score = -1
+
+    for p in products:
+        title = (p.get("title") or "").lower()
+        handle = (p.get("handle") or "").lower()
+        p_url = p.get("url") or ""
+
+        score = 0
+        if query_l in title:
+            score += 3
+        if query_l in handle:
+            score += 2
+        if "clementina" in query_l and "clementina" in title:
+            score += 1
+
+        if score > best_score:
+            best_score = score
+            best = p_url or ("/products/" + handle if handle else None)
+
+    if not best:
+        return None
+
+    return urljoin("https://kocca.it", best)
+
+
+def find_marc_ellis_product_url(sku: str) -> str | None:
+    """
+    Trova l'URL prodotto MARC ELLIS usando la search JSON Shopify.
+    Esempio: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'.
+    """
+    query = build_marc_ellis_query_from_sku(sku)
+    q = quote_plus(query)
+
+    suggest_url = (
+        "https://marcellis.com/search/suggest.json"
+        f"?q={q}&resources[type]=product&resources[limit]=10"
+    )
+    print(f"   🔍 (MARC ELLIS JSON) {suggest_url}")
+    resp = http_get(suggest_url)
+    if not resp:
+        return None
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        print("   ✖ Errore parsing JSON Marc Ellis:", e)
+        return None
+
+    resources = data.get("resources") or {}
+    results = resources.get("results") or {}
+    products = results.get("products") or []
+
+    if not products:
+        print("   ✖ Nessun prodotto Marc Ellis da suggest.json")
+        return None
+
+    tokens = [t for t in re.split(r"\s+", query.lower()) if len(t) > 2]
+    best = None
+    best_score = -1
+
+    for p in products:
+        title = (p.get("title") or "").lower()
+        handle = (p.get("handle") or "").lower()
+        p_url = p.get("url") or ""
+
+        score = 0
+        for t in tokens:
+            if t in title:
+                score += 2
+            if t in handle:
+                score += 1
+
+        if score > best_score:
+            best_score = score
+            best = p_url or ("/products/" + handle if handle else None)
+
+    if not best:
+        return None
+
+    return urljoin("https://marcellis.com", best)
+
 
 def build_search_url(brand: str, sku: str) -> str | None:
     """
-    Costruisce l'URL di ricerca a seconda del brand.
-    Per alcuni brand (KOCCA, MARC ELLIS) usiamo una logica ad hoc.
-    Per gli altri usiamo /search?q=SKU sul dominio ufficiale.
+    Costruisce l'URL di ricerca generico (fallback HTML) se non abbiamo JSON
+    o se la ricerca brand-specific non trova nulla.
     """
-    b = (brand or "").strip().lower()
-
-    # KOCCA → cerca per nome modello (CLEMENTINA, ELISEWIN, ecc.)
-    if b == "kocca":
-        query = build_kocca_query_from_sku(sku)
-        q = quote_plus(query)
-        return f"https://kocca.it/search?q={q}"
-
-    # MARC ELLIS → dominio + search corretta + query "umana"
-    if b == "marc ellis":
-        query = build_marc_ellis_query_from_sku(sku)
-        q = quote_plus(query)
-        # URL che mi hai indicato:
-        # https://marcellis.com/search?options%5Bprefix%5D=last&q=
-        return (
-            "https://marcellis.com/search"
-            "?options%5Bprefix%5D=last"
-            f"&q={q}"
-        )
-
-    # altri brand → fallback generico /search?q=<SKU> sul dominio mappato
-    domain = BRAND_DOMAIN_MAP.get(brand.upper())
+    domain = BRAND_DOMAIN_MAP.get((brand or "").upper())
     if not domain:
         return None
 
@@ -310,16 +397,15 @@ def build_search_url(brand: str, sku: str) -> str | None:
     return f"https://{domain}/search?q={q}"
 
 
-
 def pick_first_product_link_from_search(html: str, base_url: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
 
-    # 1) Link con <img> (tipico risultato prodotto in griglia)
+    # 1) link con <img> (tipico risultato prodotto)
     for a in soup.find_all("a", href=True):
         if a.find("img"):
             return urljoin(base_url, a["href"])
 
-    # 2) Fallback: link con path che assomiglia a una pagina prodotto
+    # 2) fallback: link che assomiglia a pagina prodotto
     for a in soup.find_all("a", href=True):
         href = a["href"]
         full = urljoin(base_url, href)
@@ -336,12 +422,11 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
     # 1) og:image
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
-        return urljoin(page_url, og["content"].strip())
+        return urljoin(page_url, og.get("content").strip())
 
-    # 2) JSON-LD con campo image
+    # 2) JSON-LD con image
     for script in soup.find_all("script", type="application/ld+json"):
         try:
-            import json
             data = json.loads(script.string or "{}")
             if isinstance(data, dict) and "image" in data:
                 img = data["image"]
@@ -352,7 +437,7 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
         except Exception:
             pass
 
-    # 3) Fallback: immagine "più grande" per area (width * height)
+    # 3) fallback: immagine più grande (width*height)
     best = None
     best_area = 0
     for img in soup.find_all("img"):
@@ -360,7 +445,6 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
         if not src:
             continue
 
-        # Se è srcset, prendi il primo URL
         if "," in src:
             src = src.split(",")[0].split(" ")[0]
 
@@ -380,6 +464,10 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
     return best
 
 
+# ========================
+# DOWNLOAD & UPLOAD IMMAGINI
+# ========================
+
 def download_and_upload_image(img_url: str, sku: str, brand: str):
     print(f"   ⬇ Download immagine: {img_url}")
     resp = http_get(img_url)
@@ -395,28 +483,43 @@ def download_and_upload_image(img_url: str, sku: str, brand: str):
     ftp_upload_image_stream(resp.content, remote_dir, filename)
 
 
-
 def process_product(sku: str, brand: str):
     print(f"\n➡️ SKU: {sku} | Brand: {brand}")
+    b = (brand or "").strip().lower()
 
-    search_url = build_search_url(brand, sku)
-    if not search_url:
-        print("   ✖ Brand non mappato in BRAND_DOMAIN_MAP. Aggiorna il dizionario.")
-        return
+    product_url = None
 
-    print(f"   🔍 Cerco prodotto su: {search_url}")
-    search_resp = http_get(search_url)
-    if not search_resp:
-        return
+    # 1) BRAND-SPECIFIC JSON SEARCH
+    if b == "kocca":
+        product_url = find_kocca_product_url(sku)
+        if product_url:
+            print(f"   🔗 Pagina prodotto KOCCA (JSON): {product_url}")
+    elif b == "marc ellis":
+        product_url = find_marc_ellis_product_url(sku)
+        if product_url:
+            print(f"   🔗 Pagina prodotto MARC ELLIS (JSON): {product_url}")
 
-    product_url = pick_first_product_link_from_search(search_resp.text, search_url)
+    # 2) FALLBACK HTML SE JSON NON TROVA NIENTE
     if not product_url:
-        print("   ✖ Nessuna pagina prodotto trovata.")
-        return
+        search_url = build_search_url(brand, sku)
+        if not search_url:
+            print("   ✖ Nessuna URL di ricerca disponibile per questo brand.")
+            return
 
-    print(f"   🔗 Pagina prodotto: {product_url}")
+        print(f"   🔍 Cerco prodotto (fallback HTML) su: {search_url}")
+        search_resp = http_get(search_url)
+        if not search_resp:
+            return
+
+        product_url = pick_first_product_link_from_search(search_resp.text, search_url)
+        if not product_url:
+            print("   ✖ Nessuna pagina prodotto trovata nemmeno via HTML.")
+            return
+
+        print(f"   🔗 Pagina prodotto (fallback HTML): {product_url}")
+
+    # 3) SCARICA PAGINA PRODOTTO E TROVA IMMAGINE
     time.sleep(SLEEP_BETWEEN_REQUESTS)
-
     product_resp = http_get(product_url)
     if not product_resp:
         return
@@ -429,25 +532,55 @@ def process_product(sku: str, brand: str):
     download_and_upload_image(img_url, sku, brand)
 
 
+# ========================
+# MAIN
+# ========================
+
 def main():
     ensure_dir(LOCAL_WORK_DIR)
 
     # 1) Scarica il CSV da FTP
     ftp_download_csv(LOCAL_CSV_PATH)
 
-    # 2) Leggi il CSV locale (solo per i dati, non per le immagini)
+    # 2) Leggi il CSV con auto-detect delimitatore e header
     with open(LOCAL_CSV_PATH, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        sample = f.read(2048)
+        f.seek(0)
+
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;|\t")
+            f.seek(0)
+            reader = csv.DictReader(f, dialect=dialect)
+        except Exception:
+            f.seek(0)
+            reader = csv.DictReader(f)
+
+        print("[*] Colonne trovate nel CSV:", reader.fieldnames)
+
+        def normalize(name: str | None) -> str:
+            return (name or "").strip().lower().replace(" ", "")
+
+        field_map = {}
+        for name in reader.fieldnames or []:
+            n = normalize(name)
+            if "sku" in n:
+                field_map["sku"] = name
+            if "brand" in n or "marca" in n:
+                field_map["brand"] = name
+
+        if "sku" not in field_map or "brand" not in field_map:
+            print("✖ Non riesco a trovare colonne SKU/Brand nel CSV. Controlla intestazioni.")
+            return
+
         for row in reader:
-            sku = (row.get("sku") or "").strip()
-            brand = (row.get("brand") or "").strip()
+            sku = (row.get(field_map["sku"]) or "").strip()
+            brand = (row.get(field_map["brand"]) or "").strip()
             if not sku or not brand:
                 continue
 
             process_product(sku, brand)
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-    # Chiudi connessione FTP
     global _ftp
     if _ftp is not None:
         _ftp.quit()
@@ -456,4 +589,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print("✖ ERRORE FATALE:", repr(e))
+        raise
