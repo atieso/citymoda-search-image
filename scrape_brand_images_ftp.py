@@ -26,10 +26,10 @@ FTP_HOST = os.getenv("FTP_HOST", "ftp.tuoserver.com")
 FTP_USER = os.getenv("FTP_USER", "username")
 FTP_PASS = os.getenv("FTP_PASS", "password")
 
-# ATTENZIONE: percorsi RELATIVI alla root FTP del tuo utente
-# Per il tuo caso attuale:
-# FTP_CSV_DIR      = "citymoda.cloud/public_html/input"
-# FTP_IMG_BASE_DIR = "citymoda.cloud/public_html/images"
+# Percorsi RELATIVI alla root FTP del tuo utente.
+# Per il tuo caso:
+#   FTP_CSV_DIR      = "citymoda.cloud/public_html/input"
+#   FTP_IMG_BASE_DIR = "citymoda.cloud/public_html/images"
 FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "citymoda.cloud/public_html/input")
 FTP_CSV_FILENAME = os.getenv("FTP_CSV_FILENAME", "prodotti.csv")
 FTP_IMG_BASE_DIR = os.getenv("FTP_IMG_BASE_DIR", "citymoda.cloud/public_html/images")
@@ -133,12 +133,12 @@ ROOT_DIR = None  # root FTP dell'utente dopo il login
 # UTILITY DI BASE
 # ========================
 
-def ensure_dir(path: str):
+def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
 
-def brand_to_folder(brand: str) -> str:
+def brand_to_folder(brand):
     return (
         brand.strip()
         .lower()
@@ -150,7 +150,7 @@ def brand_to_folder(brand: str) -> str:
     )
 
 
-def http_get(url: str) -> requests.Response | None:
+def http_get(url):
     try:
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if not resp.ok:
@@ -162,7 +162,7 @@ def http_get(url: str) -> requests.Response | None:
         return None
 
 
-def get_file_extension_from_url(url: str) -> str:
+def get_file_extension_from_url(url):
     path = urlparse(url).path
     _, ext = os.path.splitext(path)
     if ext:
@@ -174,7 +174,7 @@ def get_file_extension_from_url(url: str) -> str:
 # FTP
 # ========================
 
-def get_ftp() -> FTP:
+def get_ftp():
     global _ftp, ROOT_DIR
     if _ftp is None:
         print(f"[*] Connessione FTP a {FTP_HOST}...")
@@ -185,7 +185,7 @@ def get_ftp() -> FTP:
     return _ftp
 
 
-def ftp_download_csv(local_path: str):
+def ftp_download_csv(local_path):
     ftp = get_ftp()
 
     # vai sempre alla root
@@ -205,7 +205,7 @@ def ftp_download_csv(local_path: str):
     ftp.cwd(ROOT_DIR)
 
 
-def ftp_ensure_dir(path: str):
+def ftp_ensure_dir(path):
     """
     Crea ricorsivamente la directory su FTP se non esiste.
     Parte SEMPRE dalla ROOT_DIR, così non annidiamo mai /input/... all'infinito.
@@ -228,7 +228,7 @@ def ftp_ensure_dir(path: str):
     # alla fine restiamo nella dir di destinazione
 
 
-def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: str):
+def ftp_upload_image_stream(binary_content, remote_dir, filename):
     """
     Upload diretto: crea la dir partendo dalla ROOT_DIR, ci entra
     e fa STOR filename (senza path assoluti).
@@ -247,17 +247,18 @@ def ftp_upload_image_stream(binary_content: bytes, remote_dir: str, filename: st
 # LOGICA DI RICERCA (KOCCA / MARC ELLIS / GENERICA)
 # ========================
 
-def build_kocca_query_from_sku(sku: str) -> str:
+def build_kocca_query_from_sku(sku):
     """
     KOCCA: CLEMENTINAM9001 → 'clementina'
     Prende la parte prima della prima cifra.
     """
     s = sku.strip()
-    base = re.split(r"\d", s, maxsplit=1)[0]
+    parts = re.split(r"\d", s, maxsplit=1)
+    base = parts[0] if parts else s
     return base.lower()
 
 
-def build_marc_ellis_query_from_sku(sku: str) -> str:
+def build_marc_ellis_query_from_sku(sku):
     """
     MARC ELLIS: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'
     Rende lo SKU più "umano" per la search Shopify.
@@ -269,7 +270,19 @@ def build_marc_ellis_query_from_sku(sku: str) -> str:
     return s
 
 
-def find_kocca_product_url(sku: str) -> str | None:
+def normalize_code_for_match(s):
+    """
+    Normalizza una stringa per il confronto codici:
+    - minuscolo
+    - solo [a-z0-9]
+    Esempio:
+      'AROUNDM26BLACKLGOLD' → 'aroundm26blacklgold'
+      'around_m_26-black-l.gold' → 'aroundm26blacklgold'
+    """
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def find_kocca_product_url(sku):
     """
     Trova l'URL prodotto KOCCA usando l'endpoint di search JSON.
     Esempio: CLEMENTINAM9001 → query 'clementina'.
@@ -327,10 +340,10 @@ def find_kocca_product_url(sku: str) -> str | None:
     return urljoin("https://kocca.it", best)
 
 
-def find_marc_ellis_product_url(sku: str) -> str | None:
+def find_marc_ellis_product_url(sku):
     """
     Trova l'URL prodotto MARC ELLIS usando la search JSON Shopify.
-    Esempio: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'.
+    Migliorata per preferire handle/titoli che matchano fortemente lo SKU.
     """
     query = build_marc_ellis_query_from_sku(sku)
     q = quote_plus(query)
@@ -358,7 +371,9 @@ def find_marc_ellis_product_url(sku: str) -> str | None:
         print("   ✖ Nessun prodotto Marc Ellis da suggest.json")
         return None
 
+    sku_norm = normalize_code_for_match(sku)
     tokens = [t for t in re.split(r"\s+", query.lower()) if len(t) > 2]
+
     best = None
     best_score = -1
 
@@ -367,7 +382,22 @@ def find_marc_ellis_product_url(sku: str) -> str | None:
         handle = (p.get("handle") or "").lower()
         p_url = p.get("url") or ""
 
+        handle_norm = normalize_code_for_match(handle)
+        title_norm = normalize_code_for_match(title)
+
         score = 0
+
+        # match fortissimo: SKU normalizzato contenuto nell'handle
+        if sku_norm and sku_norm in handle_norm:
+            score += 100
+        elif sku_norm and handle_norm in sku_norm:
+            score += 80
+
+        # match sul titolo (meno forte)
+        if sku_norm and sku_norm in title_norm:
+            score += 40
+
+        # bonus per token della query presenti in titolo/handle
         for t in tokens:
             if t in title:
                 score += 2
@@ -384,7 +414,7 @@ def find_marc_ellis_product_url(sku: str) -> str | None:
     return urljoin("https://marcellis.com", best)
 
 
-def build_search_url(brand: str, sku: str) -> str | None:
+def build_search_url(brand, sku):
     """
     Costruisce l'URL di ricerca generico (fallback HTML) se non abbiamo JSON
     o se la ricerca brand-specific non trova nulla.
@@ -397,7 +427,7 @@ def build_search_url(brand: str, sku: str) -> str | None:
     return f"https://{domain}/search?q={q}"
 
 
-def pick_first_product_link_from_search(html: str, base_url: str) -> str | None:
+def pick_first_product_link_from_search(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
 
     # 1) link con <img> (tipico risultato prodotto)
@@ -416,31 +446,63 @@ def pick_first_product_link_from_search(html: str, base_url: str) -> str | None:
     return None
 
 
-def extract_main_image_from_product_page(html: str, page_url: str) -> str | None:
+def extract_all_images_from_product_page(html, page_url):
+    """
+    Estrae TUTTE le immagini prodotto rilevanti dalla pagina:
+    - og:image
+    - JSON-LD con lista di immagini
+    - <img> dentro sezioni prodotto (heuristica)
+    Ritorna una lista di URL unici in ordine di priorità.
+    """
     soup = BeautifulSoup(html, "html.parser")
+    urls = []
+
+    def add_url(u):
+        if not u:
+            return
+        full = urljoin(page_url, u)
+        if full not in urls:
+            urls.append(full)
 
     # 1) og:image
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
-        return urljoin(page_url, og.get("content").strip())
+        add_url(og.get("content").strip())
 
     # 2) JSON-LD con image
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "{}")
-            if isinstance(data, dict) and "image" in data:
-                img = data["image"]
-                if isinstance(img, list) and img:
-                    return urljoin(page_url, img[0])
-                if isinstance(img, str):
-                    return urljoin(page_url, img)
         except Exception:
-            pass
+            continue
 
-    # 3) fallback: immagine più grande (width*height)
-    best = None
-    best_area = 0
-    for img in soup.find_all("img"):
+        if isinstance(data, dict):
+            imgs = data.get("image")
+            if isinstance(imgs, str):
+                add_url(imgs)
+            elif isinstance(imgs, list):
+                for u in imgs:
+                    add_url(u)
+        elif isinstance(data, list):
+            for obj in data:
+                if not isinstance(obj, dict):
+                    continue
+                imgs = obj.get("image")
+                if isinstance(imgs, str):
+                    add_url(imgs)
+                elif isinstance(imgs, list):
+                    for u in imgs:
+                        add_url(u)
+
+    # 3) fallback: tutte le <img> "grandi" collegate al prodotto
+    product_wrappers = soup.select(
+        "[class*='product'] img, [class*='gallery'] img, [class*='media'] img"
+    )
+    candidates = product_wrappers or soup.find_all("img")
+
+    scored = []
+
+    for img in candidates:
         src = img.get("src") or img.get("data-src") or img.get("data-srcset")
         if not src:
             continue
@@ -457,33 +519,55 @@ def extract_main_image_from_product_page(html: str, page_url: str) -> str | None
         except Exception:
             area = 0
 
-        if area > best_area:
-            best_area = area
-            best = full
+        path = urlparse(full).path.lower()
+        if "/products/" in path or "/files/" in path:
+            area += 100000  # boost
 
-    return best
+        scored.append((area, full))
+
+    for _, u in sorted(scored, key=lambda x: x[0], reverse=True):
+        add_url(u)
+
+    return urls
 
 
 # ========================
 # DOWNLOAD & UPLOAD IMMAGINI
 # ========================
 
-def download_and_upload_image(img_url: str, sku: str, brand: str):
-    print(f"   ⬇ Download immagine: {img_url}")
-    resp = http_get(img_url)
-    if not resp:
+def download_and_upload_images(img_urls, sku, brand):
+    """
+    Scarica e carica su FTP tutte le immagini nella lista.
+    La prima immagine mantiene il nome SKU.ext,
+    le successive diventano SKU_2.ext, SKU_3.ext, ecc.
+    """
+    if not img_urls:
+        print("   ✖ Nessuna immagine da scaricare.")
         return
-
-    ext = get_file_extension_from_url(img_url)
-    filename = f"{sku}{ext}"
 
     brand_folder = brand_to_folder(brand)
     remote_dir = os.path.join(FTP_IMG_BASE_DIR, brand_folder).replace("\\", "/")
 
-    ftp_upload_image_stream(resp.content, remote_dir, filename)
+    for idx, img_url in enumerate(img_urls, start=1):
+        print(f"   ⬇ Download immagine #{idx}: {img_url}")
+        resp = http_get(img_url)
+        if not resp:
+            continue
+
+        ext = get_file_extension_from_url(img_url)
+        if idx == 1:
+            filename = f"{sku}{ext}"
+        else:
+            filename = f"{sku}_{idx}{ext}"
+
+        ftp_upload_image_stream(resp.content, remote_dir, filename)
 
 
-def process_product(sku: str, brand: str):
+# ========================
+# PROCESS PRODUCT
+# ========================
+
+def process_product(sku, brand):
     print(f"\n➡️ SKU: {sku} | Brand: {brand}")
     b = (brand or "").strip().lower()
 
@@ -518,18 +602,19 @@ def process_product(sku: str, brand: str):
 
         print(f"   🔗 Pagina prodotto (fallback HTML): {product_url}")
 
-    # 3) SCARICA PAGINA PRODOTTO E TROVA IMMAGINE
+    # 3) SCARICA PAGINA PRODOTTO E TROVA IMMAGINI
     time.sleep(SLEEP_BETWEEN_REQUESTS)
     product_resp = http_get(product_url)
     if not product_resp:
         return
 
-    img_url = extract_main_image_from_product_page(product_resp.text, product_url)
-    if not img_url:
+    img_urls = extract_all_images_from_product_page(product_resp.text, product_url)
+    if not img_urls:
         print("   ✖ Nessuna immagine trovata nella pagina prodotto.")
         return
 
-    download_and_upload_image(img_url, sku, brand)
+    print(f"   ✅ Trovate {len(img_urls)} immagini prodotto.")
+    download_and_upload_images(img_urls, sku, brand)
 
 
 # ========================
@@ -557,7 +642,7 @@ def main():
 
         print("[*] Colonne trovate nel CSV:", reader.fieldnames)
 
-        def normalize(name: str | None) -> str:
+        def normalize(name):
             return (name or "").strip().lower().replace(" ", "")
 
         field_map = {}
