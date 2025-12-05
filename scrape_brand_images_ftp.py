@@ -42,6 +42,29 @@ HEADERS = {
     )
 }
 
+# parole chiave per ESCLUDERE immagini di layout / default
+BAD_IMAGE_KEYWORDS = [
+    "logo",
+    "placeholder",
+    "default",
+    "noimage",
+    "no-image",
+    "spinner",
+    "loader",
+    "banner",
+    "hero",
+    "header",
+    "footer",
+    "icon",
+    "sprite",
+    "background",
+    "bg_",
+    "dummy",
+]
+
+# soglia minima di area per considerare una img come foto prodotto (~200x200)
+MIN_IMAGE_AREA = 40000
+
 # ===============================
 # MAPPATURA BRAND → DOMINIO UFFICIALE (fallback HTML)
 # ===============================
@@ -170,6 +193,19 @@ def get_file_extension_from_url(url):
     return ".jpg"
 
 
+def is_bad_image_url(url):
+    """
+    True se l'immagine è SVG o sembra una immagine di layout / default.
+    """
+    lower = url.lower()
+    if lower.endswith(".svg") or ".svg" in lower:
+        return True
+    for kw in BAD_IMAGE_KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
+
 # ========================
 # FTP
 # ========================
@@ -188,10 +224,8 @@ def get_ftp():
 def ftp_download_csv(local_path):
     ftp = get_ftp()
 
-    # vai sempre alla root
     ftp.cwd(ROOT_DIR)
 
-    # entra nella cartella del CSV
     csv_dir = FTP_CSV_DIR.lstrip("/")
     if csv_dir:
         ftp.cwd(csv_dir)
@@ -201,21 +235,17 @@ def ftp_download_csv(local_path):
         ftp.retrbinary("RETR " + FTP_CSV_FILENAME, f.write)
     print("[*] CSV scaricato.")
 
-    # torna alla root
     ftp.cwd(ROOT_DIR)
 
 
 def ftp_ensure_dir(path):
     """
     Crea ricorsivamente la directory su FTP se non esiste.
-    Parte SEMPRE dalla ROOT_DIR, così non annidiamo mai /input/... all'infinito.
+    Parte SEMPRE dalla ROOT_DIR.
     """
     ftp = get_ftp()
 
-    # normalizza: niente slash iniziale
     rel_path = path.lstrip("/")
-
-    # parti SEMPRE dalla root FTP
     ftp.cwd(ROOT_DIR)
 
     parts = [p for p in rel_path.split("/") if p]
@@ -225,14 +255,9 @@ def ftp_ensure_dir(path):
         except Exception:
             ftp.mkd(p)
             ftp.cwd(p)
-    # alla fine restiamo nella dir di destinazione
 
 
 def ftp_upload_image_stream(binary_content, remote_dir, filename):
-    """
-    Upload diretto: crea la dir partendo dalla ROOT_DIR, ci entra
-    e fa STOR filename (senza path assoluti).
-    """
     ftp = get_ftp()
 
     ftp_ensure_dir(remote_dir)
@@ -250,7 +275,6 @@ def ftp_upload_image_stream(binary_content, remote_dir, filename):
 def build_kocca_query_from_sku(sku):
     """
     KOCCA: CLEMENTINAM9001 → 'clementina'
-    Prende la parte prima della prima cifra.
     """
     s = sku.strip()
     parts = re.split(r"\d", s, maxsplit=1)
@@ -261,7 +285,6 @@ def build_kocca_query_from_sku(sku):
 def build_marc_ellis_query_from_sku(sku):
     """
     MARC ELLIS: AROUNDM26BLACKLGOLD → 'around m 26 black l gold'
-    Rende lo SKU più "umano" per la search Shopify.
     """
     s = sku.strip().lower()
     s = re.sub(r"([a-z])(\d)", r"\1 \2", s)
@@ -273,11 +296,7 @@ def build_marc_ellis_query_from_sku(sku):
 def build_peuterey_query_from_sku(sku):
     """
     PEUTEREY:
-      es. I1PEUTTUCANOMQN02NER
-      - rimuove prefisso 'I1PEUT' se presente → TUCANOMQN02NER
-      - rimuove le ultime 3 lettere (codice colore) → TUCANOMQN02
-      - prende la parte alfabetica iniziale → 'TUCANO'
-    Ritorna il nome prodotto in minuscolo (da usare nella search).
+      I1PEUTTUCANOMQN02NER → 'tucano'
     """
     s = sku.strip()
 
@@ -297,11 +316,7 @@ def build_peuterey_query_from_sku(sku):
 def build_blauer_query_from_sku(sku):
     """
     BLAUER:
-      es. I1BLAUBLUC02077006943999
-      - rimuove prefisso 'I1BLAU' → BLUC02077006943999
-      - rimuove ultime 3 cifre (es. 999) → BLUC02077006943
-      - BLUC02077 = nome prodotto, 006943 = colore
-      Cerchiamo il NOME PRODOTTO → BLUC02077
+      I1BLAUBLUC02077006943999 → 'bluc02077'
     """
     s = sku.strip()
 
@@ -309,15 +324,12 @@ def build_blauer_query_from_sku(sku):
     if s.upper().startswith(prefix):
         s = s[len(prefix):]
 
-    # rimuovi ultime 3 cifre (gruppo colore finale)
     if len(s) > 3:
         s = s[:-3]
 
-    # se la stringa rispetta lo schema "...XXXXXX" con ultimi 6 numeri = colore,
-    # li separiamo dal codice prodotto.
     match = re.match(r"^(.*?)(\d{6})$", s)
     if match:
-        product_part = match.group(1)  # es. BLUC02077
+        product_part = match.group(1)
     else:
         product_part = s
 
@@ -325,18 +337,10 @@ def build_blauer_query_from_sku(sku):
 
 
 def normalize_code_for_match(s):
-    """
-    Normalizza una stringa per il confronto codici:
-    - minuscolo
-    - solo [a-z0-9]
-    """
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
 def find_kocca_product_url(sku):
-    """
-    Trova l'URL prodotto KOCCA usando l'endpoint di search JSON.
-    """
     query = build_kocca_query_from_sku(sku)
     q = quote_plus(query)
 
@@ -391,9 +395,6 @@ def find_kocca_product_url(sku):
 
 
 def find_marc_ellis_product_url(sku):
-    """
-    Trova l'URL prodotto MARC ELLIS usando la search JSON Shopify.
-    """
     query = build_marc_ellis_query_from_sku(sku)
     q = quote_plus(query)
 
@@ -462,11 +463,10 @@ def find_marc_ellis_product_url(sku):
 
 def build_search_url(brand, sku):
     """
-    Costruisce l'URL di ricerca:
-    - KOCCA e MARC ELLIS usano JSON dedicato (gestiti altrove)
-    - PEUTEREY: ricerca per nome prodotto semplificato
-    - BLAUER: ricerca per nome prodotto semplificato
-    - altri brand: fallback generico /search?q=SKU
+    - KOCCA / MARC ELLIS: usano JSON dedicato (gestiti altrove)
+    - PEUTEREY: nome prodotto semplificato
+    - BLAUER: nome prodotto semplificato
+    - altri brand: /search?q=SKU
     """
     b = (brand or "").strip().lower()
 
@@ -478,7 +478,6 @@ def build_search_url(brand, sku):
     if b == "blauer":
         query = build_blauer_query_from_sku(sku)
         q = quote_plus(query)
-        # URL che mi hai indicato:
         return (
             "https://www.blauerusa.com/eshop/search/"
             "?search_type=&search_id=&product_id=&product_name=" + q
@@ -511,11 +510,14 @@ def pick_first_product_link_from_search(html, base_url):
 
 def extract_all_images_from_product_page(html, page_url):
     """
-    Estrae TUTTE le immagini prodotto rilevanti dalla pagina:
+    Estrae TUTTE le immagini prodotto:
     - og:image
-    - JSON-LD con lista di immagini
-    - <img> dentro sezioni prodotto (heuristica)
-    Esclude SVG.
+    - JSON-LD image
+    - <img> in container gallery/prodotto
+    Esclude:
+    - SVG
+    - immagini con keyword di layout (logo, banner, hero, ecc.)
+    - immagini troppo piccole se non sembrano prodotto
     """
     soup = BeautifulSoup(html, "html.parser")
     urls = []
@@ -524,16 +526,19 @@ def extract_all_images_from_product_page(html, page_url):
         if not u:
             return
         full = urljoin(page_url, u)
-        lower = full.lower()
-        if lower.endswith(".svg") or ".svg" in lower:
+        if is_bad_image_url(full):
             return
         if full not in urls:
             urls.append(full)
 
+    # 1) og:image (solo se non "cattiva")
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
-        add_url(og.get("content").strip())
+        candidate = urljoin(page_url, og.get("content").strip())
+        if not is_bad_image_url(candidate):
+            add_url(candidate)
 
+    # 2) JSON-LD con image (spesso è la gallery prodotto)
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "{}")
@@ -558,6 +563,7 @@ def extract_all_images_from_product_page(html, page_url):
                     for u in imgs:
                         add_url(u)
 
+    # 3) fallback: tutte le <img> "grandi" collegate al prodotto
     product_wrappers = soup.select(
         "[class*='product'] img, [class*='gallery'] img, [class*='media'] img"
     )
@@ -574,8 +580,8 @@ def extract_all_images_from_product_page(html, page_url):
             src = src.split(",")[0].split(" ")[0]
 
         full = urljoin(page_url, src)
-        lower = full.lower()
-        if lower.endswith(".svg") or ".svg" in lower:
+
+        if is_bad_image_url(full):
             continue
 
         try:
@@ -586,6 +592,17 @@ def extract_all_images_from_product_page(html, page_url):
             area = 0
 
         path = urlparse(full).path.lower()
+
+        # se area è 0 ma il path sembra prodotto, alza l'area a minimo
+        if area == 0 and any(x in path for x in ["/product", "/prod", "/p/", "/catalog", "/item", "/files"]):
+            area = MIN_IMAGE_AREA
+
+        # se area troppo piccola e non sembra prodotto → scarta
+        if area < MIN_IMAGE_AREA and not any(
+            x in path for x in ["/product", "/prod", "/p/", "/catalog", "/item", "/files"]
+        ):
+            continue
+
         if "/products/" in path or "/files/" in path:
             area += 100000
 
@@ -604,9 +621,8 @@ def extract_all_images_from_product_page(html, page_url):
 def download_and_upload_images(img_urls, sku, brand):
     """
     Scarica e carica su FTP tutte le immagini nella lista.
-    La prima immagine mantiene il nome SKU.ext,
-    le successive diventano SKU_2.ext, SKU_3.ext, ecc.
-    Esclude SVG prima del download.
+    Prima immagine: SKU.ext
+    Successive: SKU_2.ext, SKU_3.ext, ...
     """
     if not img_urls:
         print("   ✖ Nessuna immagine da scaricare.")
@@ -615,13 +631,14 @@ def download_and_upload_images(img_urls, sku, brand):
     brand_folder = brand_to_folder(brand)
     remote_dir = os.path.join(FTP_IMG_BASE_DIR, brand_folder).replace("\\", "/")
 
-    for idx, img_url in enumerate(img_urls, start=1):
-        lower = img_url.lower()
-        if lower.endswith(".svg") or ".svg" in lower:
-            print("   ⚠️ Ignorata immagine SVG:", img_url)
+    img_index = 0
+    for img_url in img_urls:
+        if is_bad_image_url(img_url):
+            print("   ⚠️ Ignorata immagine non valida / layout:", img_url)
             continue
 
-        print(f"   ⬇ Download immagine #{idx}: {img_url}")
+        img_index += 1
+        print(f"   ⬇ Download immagine #{img_index}: {img_url}")
         resp = http_get(img_url)
         if not resp:
             continue
@@ -631,10 +648,10 @@ def download_and_upload_images(img_urls, sku, brand):
             print("   ⚠️ Ignorata immagine SVG (da estensione):", img_url)
             continue
 
-        if idx == 1:
+        if img_index == 1:
             filename = f"{sku}{ext}"
         else:
-            filename = f"{sku}_{idx}{ext}"
+            filename = f"{sku}_{img_index}{ext}"
 
         ftp_upload_image_stream(resp.content, remote_dir, filename)
 
@@ -649,6 +666,7 @@ def process_product(sku, brand):
 
     product_url = None
 
+    # 1) BRAND-SPECIFIC JSON SEARCH
     if b == "kocca":
         product_url = find_kocca_product_url(sku)
         if product_url:
@@ -658,6 +676,7 @@ def process_product(sku, brand):
         if product_url:
             print(f"   🔗 Pagina prodotto MARC ELLIS (JSON): {product_url}")
 
+    # 2) FALLBACK HTML (incl. PEUTEREY, BLAUER)
     if not product_url:
         search_url = build_search_url(brand, sku)
         if not search_url:
@@ -676,6 +695,7 @@ def process_product(sku, brand):
 
         print(f"   🔗 Pagina prodotto (fallback HTML): {product_url}")
 
+    # 3) SCARICA PAGINA PRODOTTO E TROVA IMMAGINI
     time.sleep(SLEEP_BETWEEN_REQUESTS)
     product_resp = http_get(product_url)
     if not product_resp:
@@ -686,7 +706,7 @@ def process_product(sku, brand):
         print("   ✖ Nessuna immagine trovata nella pagina prodotto.")
         return
 
-    print(f"   ✅ Trovate {len(img_urls)} immagini prodotto (SVG escluse).")
+    print(f"   ✅ Trovate {len(img_urls)} immagini prodotto (dopo filtri).")
     download_and_upload_images(img_urls, sku, brand)
 
 
