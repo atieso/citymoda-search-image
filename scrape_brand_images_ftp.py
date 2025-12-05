@@ -244,7 +244,7 @@ def ftp_upload_image_stream(binary_content, remote_dir, filename):
 
 
 # ========================
-# LOGICA DI RICERCA (KOCCA / MARC ELLIS / GENERICA)
+# LOGICA DI RICERCA (KOCCA / MARC ELLIS / PEUTEREY / GENERICA)
 # ========================
 
 def build_kocca_query_from_sku(sku):
@@ -268,6 +268,33 @@ def build_marc_ellis_query_from_sku(sku):
     s = re.sub(r"(\d)([a-z])", r"\1 \2", s)
     s = s.replace("_", " ")
     return s
+
+
+def build_peuterey_query_from_sku(sku):
+    """
+    PEUTEREY:
+      es. I1PEUTTUCANOMQN02NER
+      - rimuove prefisso 'I1PEUT' se presente → TUCANOMQN02NER
+      - rimuove le ultime 3 lettere (codice colore) → TUCANOMQN02
+      - prende la parte alfabetica iniziale → 'TUCANO'
+    Ritorna il nome prodotto in minuscolo (da usare nella search).
+    """
+    s = sku.strip()
+
+    # rimuovi prefisso noto
+    prefix = "I1PEUT"
+    if s.upper().startswith(prefix):
+        s = s[len(prefix):]
+
+    # rimuovi ultime 3 lettere (codice colore), se la stringa è abbastanza lunga
+    if len(s) > 3:
+        s = s[:-3]
+
+    # prendi parte alfabetica iniziale (prima di eventuali cifre)
+    parts = re.split(r"\d", s, maxsplit=1)
+    base = parts[0] if parts else s
+
+    return base.lower()
 
 
 def normalize_code_for_match(s):
@@ -416,9 +443,20 @@ def find_marc_ellis_product_url(sku):
 
 def build_search_url(brand, sku):
     """
-    Costruisce l'URL di ricerca generico (fallback HTML) se non abbiamo JSON
-    o se la ricerca brand-specific non trova nulla.
+    Costruisce l'URL di ricerca:
+    - KOCCA e MARC ELLIS usano JSON dedicato (gestiti altrove)
+    - PEUTEREY: ricerca per nome prodotto semplificato
+    - altri brand: fallback generico /search?q=SKU
     """
+    b = (brand or "").strip().lower()
+
+    # PEUTEREY → usa nome prodotto semplificato e URL specifica
+    if b == "peuterey":
+        query = build_peuterey_query_from_sku(sku)
+        q = quote_plus(query)
+        # URL che mi hai indicato:
+        return f"https://www.peuterey.com/it/search/?q={q}"
+
     domain = BRAND_DOMAIN_MAP.get((brand or "").upper())
     if not domain:
         return None
@@ -461,8 +499,8 @@ def extract_all_images_from_product_page(html, page_url):
         if not u:
             return
         full = urljoin(page_url, u)
-        # ❌ escludi SVG
         lower = full.lower()
+        # ❌ escludi SVG
         if lower.endswith(".svg") or ".svg" in lower:
             return
         if full not in urls:
@@ -515,7 +553,6 @@ def extract_all_images_from_product_page(html, page_url):
             src = src.split(",")[0].split(" ")[0]
 
         full = urljoin(page_url, src)
-
         lower = full.lower()
         if lower.endswith(".svg") or ".svg" in lower:
             continue
@@ -603,7 +640,7 @@ def process_product(sku, brand):
         if product_url:
             print(f"   🔗 Pagina prodotto MARC ELLIS (JSON): {product_url}")
 
-    # 2) FALLBACK HTML SE JSON NON TROVA NIENTE
+    # 2) FALLBACK HTML (incl. PEUTEREY con query speciale)
     if not product_url:
         search_url = build_search_url(brand, sku)
         if not search_url:
