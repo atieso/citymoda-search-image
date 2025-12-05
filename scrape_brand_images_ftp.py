@@ -244,7 +244,7 @@ def ftp_upload_image_stream(binary_content, remote_dir, filename):
 
 
 # ========================
-# LOGICA DI RICERCA (KOCCA / MARC ELLIS / PEUTEREY / GENERICA)
+# LOGICA DI RICERCA (KOCCA / MARC ELLIS / PEUTEREY / BLAUER / GENERICA)
 # ========================
 
 def build_kocca_query_from_sku(sku):
@@ -281,20 +281,47 @@ def build_peuterey_query_from_sku(sku):
     """
     s = sku.strip()
 
-    # rimuovi prefisso noto
     prefix = "I1PEUT"
     if s.upper().startswith(prefix):
         s = s[len(prefix):]
 
-    # rimuovi ultime 3 lettere (codice colore), se la stringa è abbastanza lunga
     if len(s) > 3:
         s = s[:-3]
 
-    # prendi parte alfabetica iniziale (prima di eventuali cifre)
     parts = re.split(r"\d", s, maxsplit=1)
     base = parts[0] if parts else s
 
     return base.lower()
+
+
+def build_blauer_query_from_sku(sku):
+    """
+    BLAUER:
+      es. I1BLAUBLUC02077006943999
+      - rimuove prefisso 'I1BLAU' → BLUC02077006943999
+      - rimuove ultime 3 cifre (es. 999) → BLUC02077006943
+      - BLUC02077 = nome prodotto, 006943 = colore
+      Cerchiamo il NOME PRODOTTO → BLUC02077
+    """
+    s = sku.strip()
+
+    prefix = "I1BLAU"
+    if s.upper().startswith(prefix):
+        s = s[len(prefix):]
+
+    # rimuovi ultime 3 cifre (gruppo colore finale)
+    if len(s) > 3:
+        s = s[:-3]
+
+    # se la stringa rispetta lo schema "...XXXXXX" con ultimi 6 numeri = colore,
+    # li separiamo dal codice prodotto.
+    match = re.match(r"^(.*?)(\d{6})$", s)
+    if match:
+        product_part = match.group(1)  # es. BLUC02077
+    else:
+        product_part = s
+
+    return product_part.lower()
 
 
 def normalize_code_for_match(s):
@@ -302,9 +329,6 @@ def normalize_code_for_match(s):
     Normalizza una stringa per il confronto codici:
     - minuscolo
     - solo [a-z0-9]
-    Esempio:
-      'AROUNDM26BLACKLGOLD' → 'aroundm26blacklgold'
-      'around_m_26-black-l.gold' → 'aroundm26blacklgold'
     """
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -312,9 +336,8 @@ def normalize_code_for_match(s):
 def find_kocca_product_url(sku):
     """
     Trova l'URL prodotto KOCCA usando l'endpoint di search JSON.
-    Esempio: CLEMENTINAM9001 → query 'clementina'.
     """
-    query = build_kocca_query_from_sku(sku)  # es. 'clementina'
+    query = build_kocca_query_from_sku(sku)
     q = quote_plus(query)
 
     suggest_url = (
@@ -370,7 +393,6 @@ def find_kocca_product_url(sku):
 def find_marc_ellis_product_url(sku):
     """
     Trova l'URL prodotto MARC ELLIS usando la search JSON Shopify.
-    Migliorata per preferire handle/titoli che matchano fortemente lo SKU.
     """
     query = build_marc_ellis_query_from_sku(sku)
     q = quote_plus(query)
@@ -414,17 +436,14 @@ def find_marc_ellis_product_url(sku):
 
         score = 0
 
-        # match fortissimo: SKU normalizzato contenuto nell'handle
         if sku_norm and sku_norm in handle_norm:
             score += 100
         elif sku_norm and handle_norm in sku_norm:
             score += 80
 
-        # match sul titolo (meno forte)
         if sku_norm and sku_norm in title_norm:
             score += 40
 
-        # bonus per token della query presenti in titolo/handle
         for t in tokens:
             if t in title:
                 score += 2
@@ -446,16 +465,24 @@ def build_search_url(brand, sku):
     Costruisce l'URL di ricerca:
     - KOCCA e MARC ELLIS usano JSON dedicato (gestiti altrove)
     - PEUTEREY: ricerca per nome prodotto semplificato
+    - BLAUER: ricerca per nome prodotto semplificato
     - altri brand: fallback generico /search?q=SKU
     """
     b = (brand or "").strip().lower()
 
-    # PEUTEREY → usa nome prodotto semplificato e URL specifica
     if b == "peuterey":
         query = build_peuterey_query_from_sku(sku)
         q = quote_plus(query)
-        # URL che mi hai indicato:
         return f"https://www.peuterey.com/it/search/?q={q}"
+
+    if b == "blauer":
+        query = build_blauer_query_from_sku(sku)
+        q = quote_plus(query)
+        # URL che mi hai indicato:
+        return (
+            "https://www.blauerusa.com/eshop/search/"
+            "?search_type=&search_id=&product_id=&product_name=" + q
+        )
 
     domain = BRAND_DOMAIN_MAP.get((brand or "").upper())
     if not domain:
@@ -468,12 +495,10 @@ def build_search_url(brand, sku):
 def pick_first_product_link_from_search(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
 
-    # 1) link con <img> (tipico risultato prodotto)
     for a in soup.find_all("a", href=True):
         if a.find("img"):
             return urljoin(base_url, a["href"])
 
-    # 2) fallback: link che assomiglia a pagina prodotto
     for a in soup.find_all("a", href=True):
         href = a["href"]
         full = urljoin(base_url, href)
@@ -500,18 +525,15 @@ def extract_all_images_from_product_page(html, page_url):
             return
         full = urljoin(page_url, u)
         lower = full.lower()
-        # ❌ escludi SVG
         if lower.endswith(".svg") or ".svg" in lower:
             return
         if full not in urls:
             urls.append(full)
 
-    # 1) og:image
     og = soup.find("meta", property="og:image")
     if og and og.get("content"):
         add_url(og.get("content").strip())
 
-    # 2) JSON-LD con image
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "{}")
@@ -536,7 +558,6 @@ def extract_all_images_from_product_page(html, page_url):
                     for u in imgs:
                         add_url(u)
 
-    # 3) fallback: tutte le <img> "grandi" collegate al prodotto
     product_wrappers = soup.select(
         "[class*='product'] img, [class*='gallery'] img, [class*='media'] img"
     )
@@ -566,7 +587,7 @@ def extract_all_images_from_product_page(html, page_url):
 
         path = urlparse(full).path.lower()
         if "/products/" in path or "/files/" in path:
-            area += 100000  # boost
+            area += 100000
 
         scored.append((area, full))
 
@@ -606,8 +627,6 @@ def download_and_upload_images(img_urls, sku, brand):
             continue
 
         ext = get_file_extension_from_url(img_url)
-
-        # sicurezza: se per caso l'estensione è .svg, salta
         if ext.lower() == ".svg":
             print("   ⚠️ Ignorata immagine SVG (da estensione):", img_url)
             continue
@@ -630,7 +649,6 @@ def process_product(sku, brand):
 
     product_url = None
 
-    # 1) BRAND-SPECIFIC JSON SEARCH
     if b == "kocca":
         product_url = find_kocca_product_url(sku)
         if product_url:
@@ -640,7 +658,6 @@ def process_product(sku, brand):
         if product_url:
             print(f"   🔗 Pagina prodotto MARC ELLIS (JSON): {product_url}")
 
-    # 2) FALLBACK HTML (incl. PEUTEREY con query speciale)
     if not product_url:
         search_url = build_search_url(brand, sku)
         if not search_url:
@@ -659,7 +676,6 @@ def process_product(sku, brand):
 
         print(f"   🔗 Pagina prodotto (fallback HTML): {product_url}")
 
-    # 3) SCARICA PAGINA PRODOTTO E TROVA IMMAGINI
     time.sleep(SLEEP_BETWEEN_REQUESTS)
     product_resp = http_get(product_url)
     if not product_resp:
@@ -681,10 +697,8 @@ def process_product(sku, brand):
 def main():
     ensure_dir(LOCAL_WORK_DIR)
 
-    # 1) Scarica il CSV da FTP
     ftp_download_csv(LOCAL_CSV_PATH)
 
-    # 2) Leggi il CSV con auto-detect delimitatore e header
     with open(LOCAL_CSV_PATH, newline="", encoding="utf-8") as f:
         sample = f.read(2048)
         f.seek(0)
