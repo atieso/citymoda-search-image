@@ -27,6 +27,9 @@ FTP_USER = os.getenv("FTP_USER", "username")
 FTP_PASS = os.getenv("FTP_PASS", "password")
 
 # Percorsi RELATIVI alla root FTP del tuo utente.
+# Per il tuo caso:
+#   FTP_CSV_DIR      = "citymoda.cloud/public_html/input"
+#   FTP_IMG_BASE_DIR = "citymoda.cloud/public_html/images"
 FTP_CSV_DIR = os.getenv("FTP_CSV_DIR", "citymoda.cloud/public_html/input")
 FTP_CSV_FILENAME = os.getenv("FTP_CSV_FILENAME", "prodotti.csv")
 FTP_IMG_BASE_DIR = os.getenv("FTP_IMG_BASE_DIR", "citymoda.cloud/public_html/images")
@@ -310,16 +313,10 @@ def build_peuterey_query_from_sku(sku):
     return base.lower()
 
 
-def build_blauer_codes_from_sku(sku):
+def build_blauer_query_from_sku(sku):
     """
     BLAUER:
-      I1BLAUBLUC02077006943999
-      → rimuove I1BLAU → BLUC02077006943999
-      → rimuove ultime 3 cifre (999) → BLUC02077006943
-      → split in:
-         - product_code = BLUC02077
-         - color_code   = 006943
-      Ritorna (product_code, color_code) in UPPER.
+      I1BLAUBLUC02077006943999 → 'bluc02077'
     """
     s = sku.strip()
 
@@ -327,20 +324,16 @@ def build_blauer_codes_from_sku(sku):
     if s.upper().startswith(prefix):
         s = s[len(prefix):]
 
-    # rimuovi ultime 3 cifre (codice colore finale breve)
     if len(s) > 3:
         s = s[:-3]
 
-    # separa ultimi 6 numeri (colore lungo)
     match = re.match(r"^(.*?)(\d{6})$", s)
     if match:
         product_part = match.group(1)
-        color_part = match.group(2)
     else:
         product_part = s
-        color_part = ""
 
-    return product_part.upper(), color_part.upper()
+    return product_part.lower()
 
 
 def normalize_code_for_match(s):
@@ -471,30 +464,23 @@ def find_marc_ellis_product_url(sku):
 def build_search_url(brand, sku):
     """
     - KOCCA / MARC ELLIS: usano JSON dedicato (gestiti altrove)
-    - PEUTEREY: nome prodotto semplificato (TUCANO)
-    - BLAUER: nome prodotto + colore (es. BLUC02077 006943)
+    - PEUTEREY: nome prodotto semplificato
+    - BLAUER: nome prodotto semplificato
     - altri brand: /search?q=SKU
     """
     b = (brand or "").strip().lower()
 
     if b == "peuterey":
         query = build_peuterey_query_from_sku(sku)
-        # nell'esempio: q=TUCANO (ma il sito non è case-sensitive)
-        q = quote_plus(query.upper())
+        q = quote_plus(query)
         return f"https://www.peuterey.com/it/search/?q={q}"
 
     if b == "blauer":
-        product_code, color_code = build_blauer_codes_from_sku(sku)
-        if color_code:
-            query = f"{product_code} {color_code}"
-        else:
-            query = product_code
+        query = build_blauer_query_from_sku(sku)
         q = quote_plus(query)
-        # nell'esempio:
-        # https://www.blauerusa.com/eshop/search/?...&product_name=BLUC02077+006943&key=BLUC02077+006943
         return (
             "https://www.blauerusa.com/eshop/search/"
-            f"?search_type=&search_id=&product_id=&product_name={q}&key={q}"
+            "?search_type=&search_id=&product_id=&product_name=" + q
         )
 
     domain = BRAND_DOMAIN_MAP.get((brand or "").upper())
@@ -608,9 +594,7 @@ def extract_all_images_from_product_page(html, page_url):
         path = urlparse(full).path.lower()
 
         # se area è 0 ma il path sembra prodotto, alza l'area a minimo
-        if area == 0 and any(
-            x in path for x in ["/product", "/prod", "/p/", "/catalog", "/item", "/files"]
-        ):
+        if area == 0 and any(x in path for x in ["/product", "/prod", "/p/", "/catalog", "/item", "/files"]):
             area = MIN_IMAGE_AREA
 
         # se area troppo piccola e non sembra prodotto → scarta
